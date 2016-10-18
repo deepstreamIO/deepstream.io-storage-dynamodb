@@ -9,9 +9,10 @@
     "lint": "eslint \"src/**/*.js\" \"test/**/*.js\"",
     "ci": "npm run coverage && npm run lint"
   },
-
   "homepage": "http://deepstream.io",
-  "dependencies": {},
+  "dependencies": {
+    "aws-sdk": "^2.6.9"
+  },
   "devDependencies": {
     "chai": "^3.5.0",
     "coveralls": "^2.11.9",
