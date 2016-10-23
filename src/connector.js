@@ -29,24 +29,28 @@ module.exports = class DynamoDbConnector extends EventEmitter
 			throw new Error( 'options.region is required' );
 		}
 
+		if(!options.bufferTimeout) {
+			throw new Error( 'options.bufferTimeout is required' );
+		}
+
 		AWS.config.update({
 			region: options.region
 		});
 
 
 		this.db = new AWS.DynamoDB();
-		this.documentClient = options.documentClient || new AWS.DynamoDB.DocumentClient();
+		this.documentClient = new AWS.DynamoDB.DocumentClient();
 	}
 
 	createTable( tableName, callback, dontWait ) {
 		var params = {
 			AttributeDefinitions: [{
-					AttributeName: 'ds_id',
-					AttributeType: 'S'
+				AttributeName: 'ds_id',
+				AttributeType: 'S'
 			}],
 			KeySchema: [{
-					AttributeName: 'ds_id',
-					KeyType: 'HASH'
+				AttributeName: 'ds_id',
+				KeyType: 'HASH'
 			}],
 			ProvisionedThroughput: {
 				ReadCapacityUnits: 5,
@@ -111,12 +115,14 @@ module.exports = class DynamoDbConnector extends EventEmitter
 	 */
 	set(id, data, cb) {
 
+		data = dataTransform.transformValueForStorage( data );
+		data.ds_id = this._getId( id );
 		const params = {
-			TableName: this.table,
-			Item: dataTransform.transformValueForStorage( data )
+			TableName: this._getTableName( id ),
+			Item: data
 		};
-		// console.log('Set', params);
-		this.documentClient.put(params, err => {
+
+		this.documentClient.put(params, function( err ) {
 			cb(err ? err.message : null);
 		});
 	}
@@ -133,21 +139,28 @@ module.exports = class DynamoDbConnector extends EventEmitter
 	 */
 	get(id, cb) {
 		const params = {
-			TableName: this.table,
+			TableName: this._getTableName( id ),
 			Key: {
-				ds_id: id
+				ds_id: this._getId( id )
 			}
 		};
 
 		this.documentClient.get(params, (err, res) => {
 			if (err) {
-				return cb(err.message);
+				if( err.code === 'ResourceNotFoundException' ) {
+					cb( null, null );
+				} else {
+					cb(err.message);
+				}
 			}
-			if (!res || !res.Item) {
-				return cb(null, null);
+			else if (!res || !res.Item) {
+				cb(null, null);
 			}
-
-			return cb(null, dataTrasform.transformValueFromStorage( res.Item ) );
+			else {
+				delete res.Item.ds_id;
+				var data = dataTransform.transformValueFromStorage( res.Item );
+				cb(null, data );
+			}
 		});
 	}
 
@@ -163,13 +176,21 @@ module.exports = class DynamoDbConnector extends EventEmitter
 	 */
 	delete(id, cb) {
 		const params = {
-			TableName: this.table,
+			TableName: this._getTableName( id ),
 			Key: {
-				ds_id: id
+				ds_id: this._getId( id )
 			}
 		};
 		this.documentClient.delete(params, err => {
 			cb(err ? err.message : null);
 		});
+	}
+
+	_getId( name ) {
+		return name.substr( 6 );
+	}
+
+	_getTableName( name ) {
+		return name.substr( 0, 6 );
 	}
 }
