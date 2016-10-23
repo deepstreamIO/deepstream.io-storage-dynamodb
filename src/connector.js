@@ -3,6 +3,7 @@
 const EventEmitter = require( 'events' ).EventEmitter;
 const AWS = require( 'aws-sdk' );
 const pkg = require( '../package.json' );
+const dataTransform = require( './transform-data' );
 
 /**
  *
@@ -24,28 +25,20 @@ module.exports = class DynamoDbConnector extends EventEmitter
 		this.name = pkg.name;
 		this.version = pkg.version;
 
-		// Set region
-		if (options.region) {
-			AWS.config.update({
-				region: options.region
-			});
+		if (!options.region) {
+			throw new Error( 'options.region is required' );
 		}
 
-		// Set table
-		if (!options.table) {
-			throw new Error('"table" option is required');
-		}
-		this.table = options.table;
+		AWS.config.update({
+			region: options.region
+		});
 
-		// Set DynamoDb instance
-		if (!options.db) {
-			options.db = new AWS.DynamoDB.DocumentClient();
-		}
-		this.db = options.db;
 
+		this.db = new AWS.DynamoDB();
+		this.documentClient = options.documentClient || new AWS.DynamoDB.DocumentClient();
 	}
 
-	createTable( tableName, callback ) {
+	createTable( tableName, callback, dontWait ) {
 		var params = {
 			AttributeDefinitions: [{
 					AttributeName: 'ds_id',
@@ -59,15 +52,51 @@ module.exports = class DynamoDbConnector extends EventEmitter
 				ReadCapacityUnits: 5,
 				WriteCapacityUnits: 5
 			},
-			TableName: tableName
-		 
-		 
-			// StreamSpecification: {
-			//   StreamEnabled: true || false,
-			//   StreamViewType: 'NEW_IMAGE | OLD_IMAGE | NEW_AND_OLD_IMAGES | KEYS_ONLY'
-			// }
+			TableName: tableName,
+
+			StreamSpecification: {
+			  StreamEnabled: true,
+			  StreamViewType: 'NEW_AND_OLD_IMAGES'
+			}
 		};
-			( new AWS.DynamoDB() ).createTable(params, callback );
+
+		this.db.createTable( params, ( err, data ) => {
+			if( err ) {
+				callback( err );
+				return;
+			}
+
+			if( dontWait === true ) {
+				callback( null, data );
+				return;
+			}
+
+			this.db.waitFor('tableExists', { TableName: tableName }, function( err, data ){
+				callback( err, data );
+			});
+		});
+	}
+
+	deleteTable( tableName, callback, dontWait ) {
+		var params = {
+			TableName : tableName
+		};
+
+		this.db.deleteTable( params, ( err, data ) => {
+			if( err ) {
+				callback( err );
+				return;
+			}
+
+			if( dontWait === true ) {
+				callback( null, data );
+				return;
+			}
+
+			this.db.waitFor( 'tableNotExists', { TableName: tableName }, function( err, data ){
+				callback( err, data );
+			});
+		});
 	}
 
 	/**
@@ -81,13 +110,13 @@ module.exports = class DynamoDbConnector extends EventEmitter
 	 * @returns {void}
 	 */
 	set(id, data, cb) {
-		data.ds_id = id;
+
 		const params = {
 			TableName: this.table,
-			Item: data
+			Item: dataTransform.transformValueForStorage( data )
 		};
 		// console.log('Set', params);
-		this.db.put(params, err => {
+		this.documentClient.put(params, err => {
 			cb(err ? err.message : null);
 		});
 	}
@@ -109,16 +138,16 @@ module.exports = class DynamoDbConnector extends EventEmitter
 				ds_id: id
 			}
 		};
-		// console.log('Get', params);
-		this.db.get(params, (err, res) => {
+
+		this.documentClient.get(params, (err, res) => {
 			if (err) {
 				return cb(err.message);
 			}
 			if (!res || !res.Item) {
 				return cb(null, null);
 			}
-			delete res.Item.ds_id;
-			return cb(null, res.Item)
+
+			return cb(null, dataTrasform.transformValueFromStorage( res.Item ) );
 		});
 	}
 
@@ -139,7 +168,7 @@ module.exports = class DynamoDbConnector extends EventEmitter
 				ds_id: id
 			}
 		};
-		this.db.delete(params, err => {
+		this.documentClient.delete(params, err => {
 			cb(err ? err.message : null);
 		});
 	}
