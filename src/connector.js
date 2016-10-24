@@ -8,8 +8,7 @@ const dataTransform = require( './transform-data' );
 /**
  *
  */
-module.exports = class DynamoDbConnector extends EventEmitter
-{
+module.exports = class DynamoDbConnector extends EventEmitter {
 	/**
 	 * Constructor
 	 *
@@ -37,9 +36,14 @@ module.exports = class DynamoDbConnector extends EventEmitter
 			region: options.region
 		});
 
+		this._writeBatchFn = this._writeBatch.bind( this );
+		this._options = options;
+		this._batch = null;
+		this._batchCallbacks = null;
+		this._batchTimeout = null;
 
-		this.db = new AWS.DynamoDB();
-		this.documentClient = new AWS.DynamoDB.DocumentClient();
+		this._db = new AWS.DynamoDB();
+		this._documentClient = new AWS.DynamoDB.DocumentClient();
 	}
 
 	createTable( tableName, callback, dontWait ) {
@@ -64,7 +68,7 @@ module.exports = class DynamoDbConnector extends EventEmitter
 			}
 		};
 
-		this.db.createTable( params, ( err, data ) => {
+		this._db.createTable( params, ( err, data ) => {
 			if( err ) {
 				callback( err );
 				return;
@@ -75,7 +79,7 @@ module.exports = class DynamoDbConnector extends EventEmitter
 				return;
 			}
 
-			this.db.waitFor('tableExists', { TableName: tableName }, function( err, data ){
+			this._db.waitFor('tableExists', { TableName: tableName }, function( err, data ){
 				callback( err, data );
 			});
 		});
@@ -86,7 +90,7 @@ module.exports = class DynamoDbConnector extends EventEmitter
 			TableName : tableName
 		};
 
-		this.db.deleteTable( params, ( err, data ) => {
+		this._db.deleteTable( params, ( err, data ) => {
 			if( err ) {
 				callback( err );
 				return;
@@ -97,7 +101,7 @@ module.exports = class DynamoDbConnector extends EventEmitter
 				return;
 			}
 
-			this.db.waitFor( 'tableNotExists', { TableName: tableName }, function( err, data ){
+			this._db.waitFor( 'tableNotExists', { TableName: tableName }, function( err, data ){
 				callback( err, data );
 			});
 		});
@@ -114,17 +118,16 @@ module.exports = class DynamoDbConnector extends EventEmitter
 	 * @returns {void}
 	 */
 	set(id, data, cb) {
-
 		data = dataTransform.transformValueForStorage( data );
 		data.ds_id = this._getId( id );
-		const params = {
-			TableName: this._getTableName( id ),
-			Item: data
-		};
 
-		this.documentClient.put(params, function( err ) {
-			cb(err ? err.message : null);
-		});
+		const params = {
+			PutRequest: {
+				Item: data
+			}
+		}
+
+		this._addToBatch( this._getTableName( id ), params, cb );
 	}
 
 	/**
@@ -145,7 +148,7 @@ module.exports = class DynamoDbConnector extends EventEmitter
 			}
 		};
 
-		this.documentClient.get(params, (err, res) => {
+		this._documentClient.get(params, (err, res) => {
 			if (err) {
 				if( err.code === 'ResourceNotFoundException' ) {
 					cb( null, null );
@@ -176,14 +179,75 @@ module.exports = class DynamoDbConnector extends EventEmitter
 	 */
 	delete(id, cb) {
 		const params = {
-			TableName: this._getTableName( id ),
-			Key: {
-				ds_id: this._getId( id )
+			DeleteRequest: {
+				Key: { ds_id: this._getId( id ) }
 			}
 		};
-		this.documentClient.delete(params, err => {
-			cb(err ? err.message : null);
-		});
+
+		this._addToBatch( this._getTableName( id ), params, cb );
+	}
+
+	_getIndexWithinBatch( table, item ) {
+		for( var i = 0; i < this._batch.RequestItems[ table ].length; i++ ) {
+			if( item.PutRequest && this._batch.RequestItems[ table ][ i ].PutRequest ) {
+				if( item.PutRequest.Item.ds_id === this._batch.RequestItems[ table ][ i ].PutRequest.Item.ds_id ) {
+					return i;
+				}
+			}
+
+			if( item.DeleteRequest && this._batch.RequestItems[ table ][ i ].DeleteRequest ) {
+				if( item.DeleteRequest.Key.ds_id === this._batch.RequestItems[ table ][ i ].DeleteRequest.Key.ds_id ) {
+					return i;
+				}
+			}
+		}
+
+		return -1;
+	}
+
+	_addToBatch( table, item, cb ) {
+		if( !this._batch ) {
+			this._batch = { RequestItems: {} };
+			this._batchCallbacks = [];
+		}
+
+		if( !this._batch.RequestItems[ table ] ) {
+			this._batch.RequestItems[ table ] = [];
+		}
+
+		var indexWithinBatch = this._getIndexWithinBatch( table, item );
+
+		if( indexWithinBatch === -1 ) {
+			this._batch.RequestItems[ table ].push( item );
+		} else {
+			this._batch.RequestItems[ table ][ indexWithinBatch ] = item;
+		}
+
+		this._batchCallbacks.push( cb );
+
+		if( this._batchTimeout === null ) {
+			this._writeBatch();
+		}
+	}
+
+	_writeBatch() {
+		if( !this._batch ) {
+			this._batchTimeout = null;
+			return;
+		}
+
+		var callbacks = Array.prototype.slice.call( this._batchCallbacks );
+
+		this._documentClient.batchWrite( this._batch, this._onBatchWriteComplete.bind( this, callbacks ) );
+		this._batchCallbacks = [];
+		this._batch = null;
+		this._batchTimeout = setTimeout( this._writeBatchFn, this._options.bufferTimeout );
+	}
+
+	_onBatchWriteComplete( callbacks, err, data ) {
+		for( var i = 0; i < callbacks.length; i++ ) {
+			callbacks[ i ]( err, data );
+		}
 	}
 
 	_getId( name ) {

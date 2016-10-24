@@ -6,8 +6,9 @@ const DbConnector = require('../src/connector')
 const EventEmitter = require('events').EventEmitter
 
 const settings = {
-	'region': 'eu-central-1'
-}
+	'region': 'eu-central-1',
+	'bufferTimeout': 1200
+};
 
 const MESSAGE_TIME = 200;
 const APP_ID = 'Xj43s3';
@@ -60,7 +61,7 @@ describe( 'creates tables', function() {
 
 });
 
-describe.only( 'sets, gets and deletes values', function(){
+describe( 'sets, gets and deletes values', function(){
 	var dbConnector;
 	var key = APP_ID + 'someValue';
 	var getValue = () => { return {  _d: { firstname: 'Wolfram' }, v: 10 }; };
@@ -109,26 +110,80 @@ describe.only( 'sets, gets and deletes values', function(){
 	});
 })
 
-// describe( 'deletes tables', function() {
-// 	var dbConnector;
-// 	this.timeout( 100000 );
+describe( 'batches multiple writes', function(){
+	var dbConnector;
+	var key = APP_ID + 'someOtherValue';
+	var getValue = ( count ) => { return {  _d: { firstname: 'Egon', count: count }, v: 10 }; };
 
-// 	it( 'creates the DbConnector', () => {
-// 		dbConnector = new dbConnector( settings )
-// 		expect( dbConnector.isReady ).to.equal( true )
-// 	})
+	it( 'creates the dbConnector', () => {
+		dbConnector = new DbConnector( settings )
+		expect( dbConnector.isReady ).to.equal( true )
+	})
 
-// 	it( 'deletes a table', ( done ) => {
-// 		dbConnector.deleteTable( APP_ID, ( err, data ) => {
-// 			expect( err ).to.be.null;
-// 			done();
-// 		});
-// 	});
 
-// 	it( 'fails when trying to delete a table a second time', ( done ) => {
-// 		dbConnector.deleteTable( APP_ID, ( err, data ) => {
-// 			expect( err ).to.not.be.null;
-// 			done();
-// 		});
-// 	});
-// });
+
+	it( 'sets values from 1 to 3', ( done ) => {
+		var result = {};
+		var cb = function( val ) {
+			result[ val ] = true;
+
+			if( result[ 1 ] && result[ 2 ] && result[ 3 ] ) {
+				done();
+			}
+		}
+		dbConnector.set( key, getValue( 1 ), ( error ) => {
+			expect( error ).to.equal( null )
+			cb( 1 );
+		})
+
+		dbConnector.set( key, getValue( 2 ), ( error ) => {
+			expect( error ).to.equal( null )
+			cb( 2 );
+		})
+
+		dbConnector.set( key, getValue( 3 ), ( error ) => {
+			expect( error ).to.equal( null )
+			cb( 3 );
+		})
+	});
+
+
+	it( 'retrieves the last value', ( done ) => {
+		dbConnector.get( key, ( error, value ) => {
+			expect( error ).to.equal( null )
+			expect( value._d.count ).to.equal( 3 )
+			done()
+		})
+	});
+
+	it( 'deletes a value', ( done ) => {
+		dbConnector.delete( key, ( error ) => {
+			expect( error ).to.equal( null )
+			done()
+		})
+	});
+})
+
+describe( 'deletes tables', function() {
+	var dbConnector;
+	this.timeout( 100000 );
+
+	it( 'creates the DbConnector', () => {
+		dbConnector = new DbConnector( settings )
+		expect( dbConnector.isReady ).to.equal( true )
+	})
+
+	it( 'deletes a table', ( done ) => {
+		dbConnector.deleteTable( APP_ID, ( err, data ) => {
+			expect( err ).to.be.null;
+			done();
+		});
+	});
+
+	it( 'fails when trying to delete a table a second time', ( done ) => {
+		dbConnector.deleteTable( APP_ID, ( err, data ) => {
+			expect( err ).to.not.be.null;
+			done();
+		});
+	});
+});
