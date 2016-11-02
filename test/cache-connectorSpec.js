@@ -9,9 +9,9 @@ const settings = {
 	'region': 'eu-central-1',
 	'bufferTimeout': 1200
 };
-
 const MESSAGE_TIME = 200;
 const APP_ID = 'Xj43s3';
+
 describe( 'the message connector has the correct structure', () => {
 	var dbConnector
 
@@ -58,7 +58,6 @@ describe( 'creates tables', function() {
 			done();
 		});
 	});
-
 });
 
 describe( 'sets, gets and deletes values', function(){

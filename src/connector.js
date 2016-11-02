@@ -160,6 +160,22 @@ module.exports = class DynamoDbConnector extends EventEmitter {
 		});
 	}
 
+	getAllKeysForApp( appId, callback ) {
+		var params = {
+			TableName: appId,
+			AttributesToGet: [ 'ds_id' ],
+			ConsistentRead: false,
+			Limit: 10000000000000,
+			ReturnConsumedCapacity: 'INDEXES',
+			ScanIndexForward: true,
+			Select: 'ALL_ATTRIBUTES',
+			ExpressionAttributeValues: {
+				':hkey': 'key'
+			}
+		};
+		this._documentClient.query( params, callback );
+	}
+
 	/**
 	 * Writes a value to the database
 	 *
